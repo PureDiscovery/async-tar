@@ -6,7 +6,7 @@ use async_std::{
     path::Path,
     prelude::*,
 };
-
+use bytes::BytesMut;
 use crate::{
     header::{bytes2path, path2bytes, HeaderMode},
     other, EntryType, Header,
@@ -410,17 +410,51 @@ async fn append(
     header: &Header,
     mut data: &mut (dyn Read + Unpin + Send),
 ) -> io::Result<()> {
+    let mut return_result = Ok(());
+    let expected_size = header.size()?;
     dst.write_all(header.as_bytes()).await?;
-    let len = io::copy(&mut data, &mut dst).await?;
+
+    let mut total_len_written = 0_u64;
+    let mut write_buffer = BytesMut::with_capacity(10_485_760);
+
+    while total_len_written < expected_size {
+        let current_len_written = match data.read(&mut write_buffer).await {
+            Ok(0) => break,
+            Ok(len) => len as u64,
+            Err(e) => {
+                return_result = Err(io::Error::new(
+                    e.kind(),
+                    format!("{} when reading from source", e),
+                ));
+                break;
+            }
+        };
+        dst.write_all(&write_buffer[..current_len_written as usize]).await?;
+        write_buffer.clear();
+        total_len_written += current_len_written;
+    }
+
+
+    if total_len_written != expected_size {
+        let diff = expected_size - total_len_written;
+        let chunk_size = 10_485_760; // 10MiB
+        let mut remaining = diff;
+
+        while remaining > 0 {
+            let to_write = std::cmp::min(chunk_size, remaining);
+            dst.write_all(&vec![0xff; to_write as usize]).await?;
+            remaining -= to_write;
+        }
+    }
 
     // Pad with zeros if necessary.
     let buf = [0; 512];
-    let remaining = 512 - (len % 512);
+    let remaining = 512 - (expected_size % 512);
     if remaining < 512 {
         dst.write_all(&buf[..remaining as usize]).await?;
     }
 
-    Ok(())
+    return_result
 }
 
 async fn append_path_with_name(
