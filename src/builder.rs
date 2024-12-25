@@ -405,6 +405,8 @@ impl<W: Write + Unpin + Send + Sync> Builder<W> {
     }
 }
 
+const APPEND_BUFFER_SIZE: usize = 2_usize.pow(20) * 10;
+
 async fn append(
     mut dst: &mut (dyn Write + Unpin + Send),
     header: &Header,
@@ -412,54 +414,76 @@ async fn append(
 ) -> io::Result<()> {
     let mut return_result = Ok(());
     let expected_size = header.size()?;
-    dst.write_all(header.as_bytes()).await?;
+    match dst.write_all(header.as_bytes()).await {
+        Ok(_) => {}
+        Err(e) => {
+            let msg = format!("ASYNC-TAR-APPEND: Fatal: {} when writing header for {}", e, header.path()?.display());
+            eprintln!("{}", msg);
+            return Err(io::Error::new(io::ErrorKind::Other, format!("{}", msg)));
+        }
+    }
 
     let mut total_len_written = 0_u64;
-    let mut write_buffer = BytesMut::with_capacity(10_485_760);
+    let mut write_buffer = BytesMut::with_capacity(APPEND_BUFFER_SIZE);
     unsafe {
-        write_buffer.set_len(10_485_760); // Set length without filling
+        write_buffer.set_len(APPEND_BUFFER_SIZE); // Set length without filling
     }
 
     while total_len_written < expected_size {
-        let current_len_written = match data.read(&mut write_buffer).await {
+        let current_len_read = match data.read(&mut write_buffer).await {
             Ok(0) => break,
             Ok(len) => len as u64,
             Err(e) => {
-                return_result = Err(io::Error::new(
-                    e.kind(),
-                    format!("{} when reading from source {}", e, header.path()?.display()),
-                ));
+                eprintln!("ASYNC-TAR-APPEND: {} when reading from source {}", e, header.path()?.display());
                 break;
             }
         };
-        dst.write_all(&write_buffer[..current_len_written as usize]).await?;
+        match dst.write_all(&write_buffer[..current_len_read as usize]).await {
+            Ok(_) => {}
+            Err(e) => {
+                eprintln!("ASYNC-TAR-APPEND: {} when writing to destination {}", e, header.path()?.display());
+                break;
+            }
+        }
         write_buffer.clear();
         unsafe {
-            write_buffer.set_len(10_485_760); // Set length without filling
+            write_buffer.set_len(APPEND_BUFFER_SIZE); // Set length without filling
         }
-        total_len_written += current_len_written;
+        total_len_written += current_len_read;
     }
 
 
     if total_len_written != expected_size {
-        let diff = expected_size - total_len_written;
-        let chunk_size = 10_485_760; // 10MiB
+        return_result = Err(io::Error::new(io::ErrorKind::Other, format!("Data length mismatch for {}", header.path()?.display())));
+        let diff = (expected_size - total_len_written) as usize;
         let mut remaining = diff;
 
         while remaining > 0 {
-            let to_write = std::cmp::min(chunk_size, remaining);
-            dst.write_all(&vec![0xff; to_write as usize]).await?;
+            let to_write = std::cmp::min(APPEND_BUFFER_SIZE, remaining);
+            match dst.write_all(&vec![0xff; to_write]).await {
+                Ok(_) => {}
+                Err(e) => {
+                    let msg = format!("ASYNC-TAR-APPEND: Fatal: {} when padding missing file content to destination {}", e, header.path()?.display());
+                    eprintln!("{}", msg);
+                    return Err(io::Error::new(io::ErrorKind::Other, format!("{}", msg)));
+                }
+            };
             remaining -= to_write;
         }
-
-        return_result = Err(io::Error::new(io::ErrorKind::Other, format!("Data length mismatch for {}", header.path()?.display())));
     }
 
     // Pad with zeros if necessary.
     let buf = [0; 512];
     let remaining = 512 - (expected_size % 512);
     if remaining < 512 {
-        dst.write_all(&buf[..remaining as usize]).await?;
+        match dst.write_all(&buf[..remaining as usize]).await {
+            Ok(_) => {}
+            Err(e) => {
+                let msg = format!("ASYNC-TAR-APPEND: Fatal: {} when padding end of entry to destination {}", e, header.path()?.display());
+                eprintln!("{}", msg);
+                return Err(io::Error::new(io::ErrorKind::Other, format!("{}", msg)));
+            }
+        }
     }
 
     return_result
