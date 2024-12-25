@@ -405,7 +405,7 @@ impl<W: Write + Unpin + Send + Sync> Builder<W> {
     }
 }
 
-const APPEND_BUFFER_SIZE: usize = 2_usize.pow(20) * 10;
+const APPEND_BUFFER_SIZE: usize = 2_usize.pow(20) * 1;
 
 async fn append(
     mut dst: &mut (dyn Write + Unpin + Send),
@@ -424,10 +424,7 @@ async fn append(
     }
 
     let mut total_len_written = 0_u64;
-    let mut write_buffer = BytesMut::with_capacity(APPEND_BUFFER_SIZE);
-    unsafe {
-        write_buffer.set_len(APPEND_BUFFER_SIZE); // Set length without filling
-    }
+    let mut write_buffer = vec![0; APPEND_BUFFER_SIZE];
 
     while total_len_written < expected_size {
         let current_len_read = match data.read(&mut write_buffer).await {
@@ -445,10 +442,7 @@ async fn append(
                 break;
             }
         }
-        write_buffer.clear();
-        unsafe {
-            write_buffer.set_len(APPEND_BUFFER_SIZE); // Set length without filling
-        }
+        write_buffer = vec![0; APPEND_BUFFER_SIZE];
         total_len_written += current_len_read;
     }
 
