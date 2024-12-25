@@ -6,7 +6,6 @@ use async_std::{
     path::Path,
     prelude::*,
 };
-use bytes::{BytesMut};
 use crate::{
     header::{bytes2path, path2bytes, HeaderMode},
     other, EntryType, Header,
@@ -406,6 +405,8 @@ impl<W: Write + Unpin + Send + Sync> Builder<W> {
 }
 
 const APPEND_BUFFER_SIZE: usize = 2_usize.pow(20) * 1;
+const PADDING: [u8; 512] = [0; 512];
+const FILE_SHORT_PADDING: [u8; APPEND_BUFFER_SIZE] = [0xff; APPEND_BUFFER_SIZE];
 
 async fn append(
     mut dst: &mut (dyn Write + Unpin + Send),
@@ -424,9 +425,9 @@ async fn append(
     }
 
     let mut total_len_written = 0_u64;
+    let mut write_buffer: Vec<u8> = vec![0; APPEND_BUFFER_SIZE];
 
     while total_len_written < expected_size {
-        let mut write_buffer: Vec<u8> = vec![0; APPEND_BUFFER_SIZE];
         let current_len_read = match data.read(&mut write_buffer).await {
             Ok(0) => break,
             Ok(len) => len as u64,
@@ -445,15 +446,13 @@ async fn append(
         total_len_written += current_len_read;
     }
 
-
     if total_len_written != expected_size {
         return_result = Err(io::Error::new(io::ErrorKind::Other, format!("Data length mismatch for {}", header.path()?.display())));
         let diff = (expected_size - total_len_written) as usize;
         let mut remaining = diff;
-
         while remaining > 0 {
             let to_write = std::cmp::min(APPEND_BUFFER_SIZE, remaining);
-            match dst.write_all(&vec![0xff; to_write]).await {
+            match dst.write_all(&FILE_SHORT_PADDING[..to_write]).await {
                 Ok(_) => {}
                 Err(e) => {
                     let msg = format!("ASYNC-TAR-APPEND: Fatal: {} when padding missing file content to destination {}", e, header.path()?.display());
@@ -466,10 +465,9 @@ async fn append(
     }
 
     // Pad with zeros if necessary.
-    let buf = [0; 512];
     let remaining = 512 - (expected_size % 512);
     if remaining < 512 {
-        match dst.write_all(&buf[..remaining as usize]).await {
+        match dst.write_all(&PADDING[..remaining as usize]).await {
             Ok(_) => {}
             Err(e) => {
                 let msg = format!("ASYNC-TAR-APPEND: Fatal: {} when padding end of entry to destination {}", e, header.path()?.display());
