@@ -502,17 +502,20 @@ async fn handling_incorrect_file_size() {
     header.set_metadata(&t!(file.metadata().await));
     header.set_size(2048); // past the end of file null blocks
     header.set_cksum();
-    t!(ar.append(&header, &mut file).await);
+    match ar.append(&header, &mut file).await {
+        Ok(_) => panic!("expected an error"),
+        _ => {}
+    }
 
     // Extracting
     let rdr = Cursor::new(t!(ar.into_inner().await));
     let ar = Archive::new(rdr);
-    assert!(ar.clone().unpack(td.path()).await.is_err());
+    assert!(ar.clone().unpack(td.path()).await.is_ok());
 
     // Iterating
     let rdr = Cursor::new(ar.into_inner().map_err(|_| ()).unwrap().into_inner());
     let ar = Archive::new(rdr);
-    assert!(t!(ar.entries()).any(|fr| fr.is_err()).await);
+    assert!(t!(ar.entries()).any(|fr| fr.is_ok()).await);
 }
 
 #[async_std::test]

@@ -6,7 +6,7 @@ use async_std::{
     path::Path,
     prelude::*,
 };
-use bytes::BytesMut;
+use bytes::{BytesMut};
 use crate::{
     header::{bytes2path, path2bytes, HeaderMode},
     other, EntryType, Header,
@@ -416,6 +416,9 @@ async fn append(
 
     let mut total_len_written = 0_u64;
     let mut write_buffer = BytesMut::with_capacity(10_485_760);
+    unsafe {
+        write_buffer.set_len(10_485_760); // Set length without filling
+    }
 
     while total_len_written < expected_size {
         let current_len_written = match data.read(&mut write_buffer).await {
@@ -424,13 +427,16 @@ async fn append(
             Err(e) => {
                 return_result = Err(io::Error::new(
                     e.kind(),
-                    format!("{} when reading from source", e),
+                    format!("{} when reading from source {}", e, header.path()?.display()),
                 ));
                 break;
             }
         };
         dst.write_all(&write_buffer[..current_len_written as usize]).await?;
         write_buffer.clear();
+        unsafe {
+            write_buffer.set_len(10_485_760); // Set length without filling
+        }
         total_len_written += current_len_written;
     }
 
@@ -445,6 +451,8 @@ async fn append(
             dst.write_all(&vec![0xff; to_write as usize]).await?;
             remaining -= to_write;
         }
+
+        return_result = Err(io::Error::new(io::ErrorKind::Other, format!("Data length mismatch for {}", header.path()?.display())));
     }
 
     // Pad with zeros if necessary.
