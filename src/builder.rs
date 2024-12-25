@@ -424,9 +424,9 @@ async fn append(
     }
 
     let mut total_len_written = 0_u64;
-    let mut write_buffer = vec![0; APPEND_BUFFER_SIZE];
 
     while total_len_written < expected_size {
+        let mut write_buffer: Vec<u8> = vec![0; APPEND_BUFFER_SIZE];
         let current_len_read = match data.read(&mut write_buffer).await {
             Ok(0) => break,
             Ok(len) => len as u64,
@@ -442,7 +442,6 @@ async fn append(
                 break;
             }
         }
-        write_buffer = vec![0; APPEND_BUFFER_SIZE];
         total_len_written += current_len_read;
     }
 
