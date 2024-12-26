@@ -6,7 +6,6 @@ use async_std::{
     path::Path,
     prelude::*,
 };
-use bytes::BytesMut;
 use crate::{
     header::{bytes2path, path2bytes, HeaderMode},
     other, EntryType, Header,
@@ -405,7 +404,7 @@ impl<W: Write + Unpin + Send + Sync> Builder<W> {
     }
 }
 
-const APPEND_BUFFER_SIZE: usize = 2_usize.pow(20) * 10;
+const APPEND_BUFFER_SIZE: usize = 2_usize.pow(20) * 1;
 const PADDING: [u8; 512] = [0; 512];
 const FILE_SHORT_PADDING: [u8; APPEND_BUFFER_SIZE] = [0xff; APPEND_BUFFER_SIZE];
 
@@ -426,10 +425,7 @@ async fn append(
     }
 
     let mut total_len_written = 0_u64;
-    let mut write_buffer = BytesMut::with_capacity(APPEND_BUFFER_SIZE);
-    unsafe {
-        write_buffer.set_len(APPEND_BUFFER_SIZE); // Set length without filling
-    }
+    let mut write_buffer: Vec<u8> = vec![0; APPEND_BUFFER_SIZE];
 
     while total_len_written < expected_size {
         let current_len_read = match data.read(&mut write_buffer).await {
