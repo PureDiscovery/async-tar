@@ -1,6 +1,6 @@
 [package]
 name = "async-tar"
-version = "0.5.1004"
+version = "0.5.1006"
 authors = ["dignifiedquire <me@dignifiequire.com>", "Alex Crichton <alex@alexcrichton.com>"]
 homepage = "https://github.com/PureDiscovery/async-tar"
 repository = "https://github.com/PureDiscovery/async-tar"
